@@ -10,6 +10,7 @@ const NOTIFICATION_TYPES = {
   REQUEST_REJECTED: 'request_rejected',
   REQUEST_ASSIGNED: 'request_assigned',
   REQUEST_REASSIGNED: 'request_reassigned',
+  REQUEST_STATUS_UPDATED: 'request_status_updated',
   PAYMENT_RECEIVED: 'payment_received',
   DOCUMENT_GENERATED: 'document_generated',
   SYSTEM_ALERT: 'system_alert'
@@ -18,7 +19,9 @@ const NOTIFICATION_TYPES = {
 // Créer une notification
 const createNotification = async (data) => {
   try {
+    console.log('Creating notification with data:', data);
     const notification = await Notification.create(data);
+    console.log('Notification created:', notification);
     return notification;
   } catch (error) {
     console.error('Erreur lors de la création de la notification:', error);

@@ -9,6 +9,8 @@ const asyncHandler = require('../middleware/async');
 const ErrorResponse = require('../utils/errorResponse');
 const { catchAsync } = require('../utils/errorHandler');
 const cloudinary = require('cloudinary');
+const notificationService = require('../services/notificationService');
+const { getIO } = require('../config/socket');
 
 // Fonction helper pour obtenir le prix des documents
 const getDocumentPrice = (documentType) => {
@@ -129,7 +131,11 @@ exports.getRequest = catchAsync(async (req, res) => {
   try {
     console.log('Fetching request with ID:', req.params.id);
     
-    const request = await Request.findById(req.params.id);
+    const request = await Request.findById(req.params.id)
+      .populate('user', 'firstName lastName email')
+      .populate('commune', 'name')
+      .populate('agent', 'firstName lastName');
+    
     console.log('Found request:', request);
 
     if (!request) {
@@ -139,69 +145,51 @@ exports.getRequest = catchAsync(async (req, res) => {
       });
     }
 
-    // Vérifier si l'utilisateur est le propriétaire de la demande
-    if (request.user.toString() !== req.user.id) {
+    // Vérifier les autorisations
+    const isOwner = request.user._id.toString() === req.user.id;
+    const isAssignedAgent = request.agent && request.agent._id.toString() === req.user.id;
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isOwner && !isAssignedAgent && !isAdmin) {
       return res.status(401).json({
         success: false,
         message: 'Non autorisé à accéder à cette demande'
       });
     }
 
-    // Formater les données pour correspondre à l'interface RequestDetails
+    // Formater les données pour le frontend
     const formattedRequest = {
       id: request._id,
       type: request.documentType,
-      status: request.status === 'en_attente' ? 'pending' : 
-              request.status === 'en_cours' ? 'processing' : 
-              request.status === 'terminee' ? 'approved' : 'rejected',
+      status: request.status,
       date: request.createdAt,
       lastUpdate: request.updatedAt,
       details: {
         fullName: request.fullName,
         birthDate: request.birthDate,
         birthPlace: request.birthPlace,
-        fatherName: request.fatherName || 'Non spécifié',
-        motherName: request.motherName || 'Non spécifié',
-        commune: request.commune,
-        deliveryMethod: request.deliveryMethod === 'delivery' ? 'delivery' : 'download',
-        phoneNumber: request.phoneNumber || 'Non spécifié',
+        fatherName: request.fatherName,
+        motherName: request.motherName,
+        commune: request.commune.name,
+        deliveryMethod: request.deliveryMethod,
+        phoneNumber: request.phoneNumber,
         address: request.address
       },
       timeline: [
         {
           id: 1,
-          status: 'pending',
-          date: request.tracking?.submittedAt || request.createdAt,
-          description: 'Demande soumise'
-        },
-        ...(request.tracking?.processedAt ? [{
-          id: 2,
-          status: 'processing',
-          date: request.tracking.processedAt,
-          description: 'Demande en cours de traitement'
-        }] : []),
-        ...(request.tracking?.completedAt ? [{
-          id: 3,
-          status: 'approved',
-          date: request.tracking.completedAt,
-          description: 'Demande terminée'
-        }] : []),
-        ...(request.tracking?.rejectedAt ? [{
-          id: 4,
-          status: 'rejected',
-          date: request.tracking.rejectedAt,
-          description: `Demande rejetée${request.tracking.rejectionReason ? `: ${request.tracking.rejectionReason}` : ''}`
-        }] : [])
+          status: request.status,
+          date: request.updatedAt,
+          description: getStatusDescription(request.status)
+        }
       ],
       payment: {
-        amount: request.price || 0,
-        status: request.paymentStatus || 'pending',
+        amount: request.price,
+        status: request.paymentStatus,
         date: request.updatedAt,
-        reference: request.paymentIntentId || request._id
+        reference: request._id
       }
     };
-
-    console.log('Formatted request:', formattedRequest);
 
     res.status(200).json({
       success: true,
@@ -215,6 +203,22 @@ exports.getRequest = catchAsync(async (req, res) => {
     });
   }
 });
+
+// Helper function to get status description
+const getStatusDescription = (status) => {
+  switch (status) {
+    case 'pending':
+      return 'Demande soumise';
+    case 'processing':
+      return 'Demande en cours de traitement';
+    case 'completed':
+      return 'Demande terminée';
+    case 'rejected':
+      return 'Demande rejetée';
+    default:
+      return 'Statut inconnu';
+  }
+};
 
 // @desc    Mettre à jour une demande
 // @route   PUT /api/requests/:id
@@ -361,16 +365,56 @@ exports.getUserRequests = async (req, res) => {
 exports.updateRequestStatus = async (req, res) => {
   try {
     const { status, note } = req.body;
-    const request = await Request.findById(req.params.id);
+    console.log('Mise à jour du statut - Données reçues:', { status, note, requestId: req.params.id });
+
+    const request = await Request.findById(req.params.id)
+      .populate('user', 'firstName lastName email');
 
     if (!request) {
+      console.log('Demande non trouvée:', req.params.id);
       return res.status(404).json({
         success: false,
         message: 'Demande non trouvée'
       });
     }
 
+    console.log('Demande trouvée:', {
+      id: request._id,
+      ancienStatut: request.status,
+      nouveauStatut: status,
+      utilisateur: request.user
+    });
+
+    // Vérifier si l'utilisateur est l'agent assigné ou un admin
+    const isAssignedAgent = request.agent && request.agent.toString() === req.user.id;
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isAssignedAgent && !isAdmin) {
+      console.log('Accès non autorisé:', {
+        userId: req.user.id,
+        agentId: request.agent?.toString(),
+        userRole: req.user.role
+      });
+      return res.status(401).json({
+        success: false,
+        message: 'Non autorisé à modifier le statut de cette demande'
+      });
+    }
+
+    // Mettre à jour le statut et les dates de suivi
     request.status = status;
+    
+    // Mettre à jour les dates de suivi selon le statut
+    if (status === 'processing' && !request.tracking.processedAt) {
+      request.tracking.processedAt = new Date();
+    } else if (status === 'completed' && !request.tracking.completedAt) {
+      request.tracking.completedAt = new Date();
+    } else if (status === 'rejected' && !request.tracking.rejectedAt) {
+      request.tracking.rejectedAt = new Date();
+      request.tracking.rejectionReason = note;
+    }
+
+    // Ajouter une note si fournie
     if (note) {
       request.notes.push({
         content: note,
@@ -378,22 +422,52 @@ exports.updateRequestStatus = async (req, res) => {
       });
     }
 
-    // Si la demande est complétée, générer le document
-    if (status === 'completed') {
-      // Logique de génération du document
-      // ...
+    await request.save();
+    console.log('Demande mise à jour avec succès:', {
+      id: request._id,
+      nouveauStatut: request.status,
+      dates: request.tracking
+    });
+
+    // Créer une notification pour l'utilisateur
+    try {
+      const notificationMessage = status === 'completed' 
+        ? 'Votre demande a été approuvée.' 
+        : status === 'rejected' 
+          ? `Votre demande a été rejetée${note ? `: ${note}` : '.'}` 
+          : 'Le statut de votre demande a été mis à jour.';
+
+      await notificationService.createNotification({
+        user: request.user._id,
+        type: notificationService.NOTIFICATION_TYPES.REQUEST_STATUS_UPDATED,
+        title: 'Mise à jour de votre demande',
+        message: notificationMessage,
+        request: request._id
+      });
+
+      console.log('Notification créée avec succès pour:', request.user.email);
+    } catch (notificationError) {
+      console.error('Erreur lors de la création de la notification:', notificationError);
     }
 
-    await request.save();
+    // Émettre l'événement Socket.IO pour la mise à jour en temps réel
+    const io = getIO();
+    console.log('Émission de l\'événement Socket.IO:', {
+      event: 'request_status_updated',
+      requestId: request._id,
+      status: request.status
+    });
+    io.emit('request_status_updated', request);
 
     res.json({
       success: true,
-      request
+      data: request
     });
   } catch (error) {
+    console.error('Error in updateRequestStatus:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message || 'Une erreur est survenue lors de la mise à jour du statut'
     });
   }
 };

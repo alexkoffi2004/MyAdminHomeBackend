@@ -16,6 +16,7 @@ const notificationSchema = new mongoose.Schema({
       'request_rejected',
       'request_assigned',
       'request_reassigned',
+      'request_status_updated',
       'payment_received',
       'document_generated',
       'system_alert'
