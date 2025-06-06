@@ -39,10 +39,22 @@ exports.createRequest = catchAsync(async (req, res) => {
     const deliveryFee = req.body.deliveryMethod === 'delivery' ? 2000 : 0;
     const totalPrice = documentPrice + deliveryFee;
 
+    // Trouver la commune par son nom
+    const commune = await Commune.findOne({
+      name: { $regex: new RegExp(`^${req.body.commune}$`, 'i') }
+    });
+
+    if (!commune) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commune non trouvée'
+      });
+    }
+
     // Créer la demande avec les données du formulaire
     const requestData = {
       documentType: req.body.documentType,
-      commune: req.body.commune,
+      commune: commune._id,
       fullName: req.body.fullName,
       birthDate: req.body.birthDate,
       birthPlace: req.body.birthPlace,
@@ -52,7 +64,7 @@ exports.createRequest = catchAsync(async (req, res) => {
       address: req.body.address,
       phoneNumber: req.body.phoneNumber,
       identityDocument: identityDocumentUrl,
-      status: 'en_attente',
+      status: 'pending',
       user: req.user.id,
       price: totalPrice
     };
@@ -60,45 +72,39 @@ exports.createRequest = catchAsync(async (req, res) => {
     // Créer la demande dans la base de données
     const request = await Request.create(requestData);
 
-    // Si la demande nécessite un paiement, créer une intention de paiement
-    if (totalPrice > 0) {
-      try {
-        const paymentIntent = await createPaymentIntent({
-          amount: Math.round(totalPrice), // S'assurer que c'est un nombre entier
-          requestId: request._id,
-          userId: req.user.id
-        });
-
-        // Mettre à jour la demande avec l'ID de l'intention de paiement
-        request.paymentIntentId = paymentIntent.id;
-        await request.save();
-      } catch (paymentError) {
-        console.error('Payment intent creation error:', paymentError);
-        // Supprimer la demande si la création de l'intention de paiement échoue
-        await request.deleteOne();
-        throw new Error(`Erreur lors de la création de l'intention de paiement: ${paymentError.message}`);
-      }
+    // Assigner un agent à la demande
+    try {
+      const agent = await assignRequestToAgent(request._id, request.commune);
+      request.agent = agent._id;
+      await request.save();
+      console.log('Agent assigné avec succès:', agent._id);
+    } catch (error) {
+      console.error('Erreur lors de l\'assignation de l\'agent:', error);
+      // On continue même si l'assignation échoue
     }
+
+    // Créer l'intention de paiement
+    const paymentIntent = await createPaymentIntent({
+      amount: totalPrice,
+      currency: 'xof',
+      requestId: request._id,
+      userId: req.user.id
+    });
+
+    // Sauvegarder l'ID de l'intention de paiement
+    request.paymentIntentId = paymentIntent.id;
+    await request.save();
 
     res.status(201).json({
       success: true,
-      data: request
+      data: request,
+      clientSecret: paymentIntent.client_secret
     });
   } catch (error) {
-    console.error('Error creating request:', error);
-    
-    // Si une erreur survient après l'upload du fichier, supprimer le fichier
-    if (req.file) {
-      try {
-        await cloudinary.uploader.destroy(req.file.filename);
-      } catch (deleteError) {
-        console.error('Error deleting uploaded file:', deleteError);
-      }
-    }
-
+    console.error('Erreur lors de la création de la demande:', error);
     res.status(500).json({
       success: false,
-      message: error.message || 'Une erreur est survenue lors de la création de la demande'
+      message: error.message
     });
   }
 });
@@ -120,81 +126,94 @@ exports.getRequests = catchAsync(async (req, res) => {
 // @route   GET /api/requests/:id
 // @access  Private (Citoyen, Agent, Admin)
 exports.getRequest = catchAsync(async (req, res) => {
-  const request = await Request.findById(req.params.id);
+  try {
+    console.log('Fetching request with ID:', req.params.id);
+    
+    const request = await Request.findById(req.params.id);
+    console.log('Found request:', request);
 
-  if (!request) {
-    return res.status(404).json({
-      success: false,
-      message: 'Demande non trouvée'
-    });
-  }
-
-  // Vérifier si l'utilisateur est le propriétaire de la demande
-  if (request.user.toString() !== req.user.id) {
-    return res.status(401).json({
-      success: false,
-      message: 'Non autorisé à accéder à cette demande'
-    });
-  }
-
-  // Formater les données pour correspondre à l'interface RequestDetails
-  const formattedRequest = {
-    id: request._id,
-    type: request.documentType,
-    status: request.status === 'en_attente' ? 'pending' : 
-            request.status === 'en_cours' ? 'processing' : 
-            request.status === 'terminee' ? 'approved' : 'rejected',
-    date: request.createdAt,
-    lastUpdate: request.updatedAt,
-    details: {
-      fullName: request.fullName,
-      birthDate: request.birthDate,
-      birthPlace: request.birthPlace,
-      fatherName: request.fatherName || 'Non spécifié',
-      motherName: request.motherName || 'Non spécifié',
-      commune: request.commune,
-      deliveryMethod: request.deliveryMethod,
-      phoneNumber: request.phoneNumber || 'Non spécifié',
-      address: request.address
-    },
-    timeline: [
-      {
-        id: 1,
-        status: 'pending',
-        date: request.tracking.submittedAt,
-        description: 'Demande soumise'
-      },
-      ...(request.tracking.processedAt ? [{
-        id: 2,
-        status: 'processing',
-        date: request.tracking.processedAt,
-        description: 'Demande en cours de traitement'
-      }] : []),
-      ...(request.tracking.completedAt ? [{
-        id: 3,
-        status: 'approved',
-        date: request.tracking.completedAt,
-        description: 'Demande terminée'
-      }] : []),
-      ...(request.tracking.rejectedAt ? [{
-        id: 4,
-        status: 'rejected',
-        date: request.tracking.rejectedAt,
-        description: `Demande rejetée${request.tracking.rejectionReason ? `: ${request.tracking.rejectionReason}` : ''}`
-      }] : [])
-    ],
-    payment: {
-      amount: request.price,
-      status: request.paymentStatus,
-      date: request.updatedAt,
-      reference: request.paymentIntentId || request._id
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Demande non trouvée'
+      });
     }
-  };
 
-  res.status(200).json({
-    success: true,
-    data: formattedRequest
-  });
+    // Vérifier si l'utilisateur est le propriétaire de la demande
+    if (request.user.toString() !== req.user.id) {
+      return res.status(401).json({
+        success: false,
+        message: 'Non autorisé à accéder à cette demande'
+      });
+    }
+
+    // Formater les données pour correspondre à l'interface RequestDetails
+    const formattedRequest = {
+      id: request._id,
+      type: request.documentType,
+      status: request.status === 'en_attente' ? 'pending' : 
+              request.status === 'en_cours' ? 'processing' : 
+              request.status === 'terminee' ? 'approved' : 'rejected',
+      date: request.createdAt,
+      lastUpdate: request.updatedAt,
+      details: {
+        fullName: request.fullName,
+        birthDate: request.birthDate,
+        birthPlace: request.birthPlace,
+        fatherName: request.fatherName || 'Non spécifié',
+        motherName: request.motherName || 'Non spécifié',
+        commune: request.commune,
+        deliveryMethod: request.deliveryMethod === 'delivery' ? 'delivery' : 'download',
+        phoneNumber: request.phoneNumber || 'Non spécifié',
+        address: request.address
+      },
+      timeline: [
+        {
+          id: 1,
+          status: 'pending',
+          date: request.tracking?.submittedAt || request.createdAt,
+          description: 'Demande soumise'
+        },
+        ...(request.tracking?.processedAt ? [{
+          id: 2,
+          status: 'processing',
+          date: request.tracking.processedAt,
+          description: 'Demande en cours de traitement'
+        }] : []),
+        ...(request.tracking?.completedAt ? [{
+          id: 3,
+          status: 'approved',
+          date: request.tracking.completedAt,
+          description: 'Demande terminée'
+        }] : []),
+        ...(request.tracking?.rejectedAt ? [{
+          id: 4,
+          status: 'rejected',
+          date: request.tracking.rejectedAt,
+          description: `Demande rejetée${request.tracking.rejectionReason ? `: ${request.tracking.rejectionReason}` : ''}`
+        }] : [])
+      ],
+      payment: {
+        amount: request.price || 0,
+        status: request.paymentStatus || 'pending',
+        date: request.updatedAt,
+        reference: request.paymentIntentId || request._id
+      }
+    };
+
+    console.log('Formatted request:', formattedRequest);
+
+    res.status(200).json({
+      success: true,
+      data: formattedRequest
+    });
+  } catch (error) {
+    console.error('Error in getRequest:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Une erreur est survenue lors de la récupération de la demande'
+    });
+  }
 });
 
 // @desc    Mettre à jour une demande
@@ -258,42 +277,62 @@ exports.deleteRequest = catchAsync(async (req, res) => {
   });
 });
 
-// @desc    Obtenir les demandes d'un agent
-// @route   GET /api/requests/agent
+// @desc    Obtenir toutes les demandes d'un agent
+// @route   GET /api/requests/agent/requests
 // @access  Private (Agent)
-exports.getAgentRequests = async (req, res) => {
-  try {
-    const { status, page = 1, limit = 10 } = req.query;
-    const query = {
-      assignedTo: req.user._id
-    };
+exports.getAgentRequests = catchAsync(async (req, res) => {
+  console.log('User ID from token:', req.user._id);
+  console.log('User role:', req.user.role);
 
-    if (status) {
-      query.status = status;
-    }
-
-    const requests = await Request.find(query)
-      .sort('-createdAt')
-      .populate('user', 'firstName lastName email')
-      .populate('payment', 'status amount')
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const count = await Request.countDocuments(query);
-
-    res.json({
-      success: true,
-      requests,
-      totalPages: Math.ceil(count / limit),
-      currentPage: page
-    });
-  } catch (error) {
-    res.status(500).json({
+  // Vérifier si l'utilisateur est un agent
+  if (req.user.role !== 'agent') {
+    return res.status(403).json({
       success: false,
-      message: error.message
+      message: 'Accès non autorisé. Seuls les agents peuvent accéder à cette ressource.'
     });
   }
-};
+
+  // Vérifier si l'agent a une commune assignée
+  const agent = await User.findById(req.user._id);
+  console.log('Agent trouvé:', agent ? 'Oui' : 'Non');
+  console.log('Commune de l\'agent:', agent?.commune);
+
+  if (!agent || !agent.commune) {
+    return res.status(400).json({
+      success: false,
+      message: 'Aucune commune assignée à cet agent.'
+    });
+  }
+
+  // Construire la requête
+  const query = { agent: req.user._id };
+  console.log('Recherche des demandes avec la requête:', query);
+
+  // Compter le nombre total de demandes
+  const totalRequests = await Request.countDocuments(query);
+  console.log('Nombre total de demandes pour cet agent:', totalRequests);
+
+  // Récupérer toutes les demandes pour le débogage
+  const allRequests = await Request.find({});
+  console.log('Toutes les demandes dans la base de données:', allRequests);
+
+  // Récupérer les demandes de l'agent avec les informations nécessaires
+  const requests = await Request.find(query)
+    .populate('user', 'firstName lastName email')
+    .populate('commune', 'name')
+    .sort('-createdAt');
+
+  console.log('Nombre de demandes trouvées:', requests.length);
+  if (requests.length > 0) {
+    console.log('Première demande:', requests[0]);
+  }
+
+  res.status(200).json({
+    success: true,
+    count: requests.length,
+    data: requests
+  });
+});
 
 // @desc    Obtenir toutes les demandes d'un utilisateur
 // @route   GET /api/requests

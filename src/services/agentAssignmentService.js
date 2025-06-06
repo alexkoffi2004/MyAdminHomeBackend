@@ -6,6 +6,8 @@ const { createNotification } = require('./notificationService');
 // Trouver un agent disponible pour une commune
 const findAvailableAgent = async (communeId) => {
   try {
+    console.log('Recherche d\'un agent disponible pour la commune:', communeId);
+    
     // Trouver tous les agents actifs de la commune
     const agents = await User.find({
       role: 'agent',
@@ -13,22 +15,30 @@ const findAvailableAgent = async (communeId) => {
       isActive: true
     });
 
+    console.log('Nombre d\'agents trouvés:', agents.length);
+    console.log('Agents trouvés:', agents.map(a => ({ id: a._id, commune: a.commune })));
+
     if (agents.length === 0) {
       throw new Error('Aucun agent disponible pour cette commune');
     }
 
     // Filtrer les agents qui peuvent accepter plus de demandes
     const availableAgents = agents.filter(agent => agent.canAcceptMoreRequests());
+    console.log('Nombre d\'agents disponibles:', availableAgents.length);
 
     if (availableAgents.length === 0) {
       throw new Error('Tous les agents de cette commune ont atteint leur limite quotidienne');
     }
 
     // Sélectionner l'agent avec le moins de demandes
-    return availableAgents.reduce((prev, current) => 
+    const selectedAgent = availableAgents.reduce((prev, current) => 
       (prev.dailyRequestCount < current.dailyRequestCount) ? prev : current
     );
+    console.log('Agent sélectionné:', { id: selectedAgent._id, commune: selectedAgent.commune });
+
+    return selectedAgent;
   } catch (error) {
+    console.error('Erreur lors de la recherche d\'un agent disponible:', error);
     throw new Error(`Erreur lors de la recherche d'un agent disponible: ${error.message}`);
   }
 };
@@ -36,22 +46,26 @@ const findAvailableAgent = async (communeId) => {
 // Assigner une demande à un agent
 const assignRequestToAgent = async (requestId, communeId) => {
   try {
+    console.log('Assignation de la demande', requestId, 'à un agent de la commune', communeId);
+    
     const agent = await findAvailableAgent(communeId);
+    console.log('Agent trouvé pour l\'assignation:', { id: agent._id, commune: agent.commune });
     
     // Incrémenter le compteur de demandes de l'agent
     await agent.incrementRequestCount();
 
     // Créer une notification pour l'agent
-    await createNotification(
-      agent._id,
-      NOTIFICATION_TYPES.REQUEST_ASSIGNED,
-      'Nouvelle demande assignée',
-      'Une nouvelle demande vous a été assignée.',
-      { requestId }
-    );
+    await createNotification({
+      user: agent._id,
+      type: NOTIFICATION_TYPES.REQUEST_ASSIGNED,
+      title: 'Nouvelle demande assignée',
+      message: 'Une nouvelle demande vous a été assignée.',
+      request: requestId
+    });
 
     return agent;
   } catch (error) {
+    console.error('Erreur lors de l\'assignation de la demande:', error);
     throw new Error(`Erreur lors de l'assignation de la demande: ${error.message}`);
   }
 };

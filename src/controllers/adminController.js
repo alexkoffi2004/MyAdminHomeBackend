@@ -7,27 +7,41 @@ const { catchAsync } = require('../utils/errorHandler');
 
 // @desc    Créer un agent
 // @route   POST /api/admin/agents
-// @access  Private/Super Admin
+// @access  Private/Admin
 exports.createAgent = asyncHandler(async (req, res, next) => {
-  // Vérifier si l'utilisateur est un super admin
-  if (!req.user.isSuperAdmin()) {
+  console.log('Tentative de création d\'agent:', req.body);
+  console.log('Utilisateur actuel:', req.user);
+
+  // Vérifier si l'utilisateur est un admin
+  if (req.user.role !== 'admin') {
+    console.log('Accès refusé: utilisateur n\'est pas admin');
     return next(new ErrorResponse('Non autorisé', 403));
   }
 
   const { communeId } = req.body;
 
-  // Vérifier si la commune existe
-  const commune = await Commune.findById(communeId);
+  // Vérifier si la commune existe en cherchant par son nom (insensible à la casse)
+  const commune = await Commune.findOne({
+    name: { $regex: new RegExp(`^${communeId}$`, 'i') }
+  });
+  
   if (!commune) {
+    console.log('Commune non trouvée:', communeId);
     return next(new ErrorResponse('Commune non trouvée', 404));
   }
 
-  // Créer l'agent
+  // Créer l'agent avec l'ID de la commune et une adresse par défaut
   const agent = await User.create({
     ...req.body,
     role: 'agent',
-    commune: communeId
+    commune: commune._id,
+    address: `${commune.name}, Abidjan, Côte d'Ivoire`,
+    maxDailyRequests: 20,
+    dailyRequestCount: 0,
+    isActive: true
   });
+
+  console.log('Agent créé avec succès:', agent);
 
   res.status(201).json({
     success: true,

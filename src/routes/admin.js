@@ -9,17 +9,15 @@ const {
 } = require('../controllers/adminController');
 const { protect, authorize } = require('../middleware/auth');
 
-// Toutes les routes admin nécessitent d'être authentifié et d'être super_admin
+// Toutes les routes admin nécessitent d'être authentifié et d'être admin
 router.use(protect);
-router.use(authorize('super_admin'));
+router.use(authorize('admin'));
 
-router.route('/agents')
-  .post(createAgent)
-  .get(getAgents);
-
-router.route('/agents/:id')
-  .get(getAgent)
-  .put(updateAgent)
-  .delete(deleteAgent);
+// Routes pour la gestion des agents
+router.post('/agents', createAgent);
+router.get('/agents', getAgents);
+router.get('/agents/:id', getAgent);
+router.put('/agents/:id', updateAgent);
+router.delete('/agents/:id', deleteAgent);
 
 module.exports = router; 

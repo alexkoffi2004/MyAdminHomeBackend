@@ -6,6 +6,10 @@ const requestSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  agent: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   documentType: {
     type: String,
     required: [true, 'Le type de document est requis'],
@@ -20,11 +24,12 @@ const requestSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['en_attente', 'en_cours', 'terminee', 'rejetee'],
-    default: 'en_attente'
+    enum: ['pending', 'processing', 'completed', 'rejected'],
+    default: 'pending'
   },
   commune: {
-    type: String,
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Commune',
     required: [true, 'La commune est requise']
   },
   // Informations personnelles

@@ -9,7 +9,17 @@ const notificationSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ['request_created', 'request_updated', 'request_completed', 'request_rejected', 'payment_received']
+    enum: [
+      'request_created',
+      'request_updated',
+      'request_completed',
+      'request_rejected',
+      'request_assigned',
+      'request_reassigned',
+      'payment_received',
+      'document_generated',
+      'system_alert'
+    ]
   },
   title: {
     type: String,

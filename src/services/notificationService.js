@@ -7,6 +7,9 @@ const NOTIFICATION_TYPES = {
   REQUEST_CREATED: 'request_created',
   REQUEST_UPDATED: 'request_updated',
   REQUEST_COMPLETED: 'request_completed',
+  REQUEST_REJECTED: 'request_rejected',
+  REQUEST_ASSIGNED: 'request_assigned',
+  REQUEST_REASSIGNED: 'request_reassigned',
   PAYMENT_RECEIVED: 'payment_received',
   DOCUMENT_GENERATED: 'document_generated',
   SYSTEM_ALERT: 'system_alert'
