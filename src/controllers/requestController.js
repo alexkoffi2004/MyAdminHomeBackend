@@ -137,9 +137,63 @@ exports.getRequest = catchAsync(async (req, res) => {
     });
   }
 
+  // Formater les données pour correspondre à l'interface RequestDetails
+  const formattedRequest = {
+    id: request._id,
+    type: request.documentType,
+    status: request.status === 'en_attente' ? 'pending' : 
+            request.status === 'en_cours' ? 'processing' : 
+            request.status === 'terminee' ? 'approved' : 'rejected',
+    date: request.createdAt,
+    lastUpdate: request.updatedAt,
+    details: {
+      fullName: request.fullName,
+      birthDate: request.birthDate,
+      birthPlace: request.birthPlace,
+      fatherName: request.fatherName || 'Non spécifié',
+      motherName: request.motherName || 'Non spécifié',
+      commune: request.commune,
+      deliveryMethod: request.deliveryMethod,
+      phoneNumber: request.phoneNumber || 'Non spécifié',
+      address: request.address
+    },
+    timeline: [
+      {
+        id: 1,
+        status: 'pending',
+        date: request.tracking.submittedAt,
+        description: 'Demande soumise'
+      },
+      ...(request.tracking.processedAt ? [{
+        id: 2,
+        status: 'processing',
+        date: request.tracking.processedAt,
+        description: 'Demande en cours de traitement'
+      }] : []),
+      ...(request.tracking.completedAt ? [{
+        id: 3,
+        status: 'approved',
+        date: request.tracking.completedAt,
+        description: 'Demande terminée'
+      }] : []),
+      ...(request.tracking.rejectedAt ? [{
+        id: 4,
+        status: 'rejected',
+        date: request.tracking.rejectedAt,
+        description: `Demande rejetée${request.tracking.rejectionReason ? `: ${request.tracking.rejectionReason}` : ''}`
+      }] : [])
+    ],
+    payment: {
+      amount: request.price,
+      status: request.paymentStatus,
+      date: request.updatedAt,
+      reference: request.paymentIntentId || request._id
+    }
+  };
+
   res.status(200).json({
     success: true,
-    data: request
+    data: formattedRequest
   });
 });
 
@@ -248,11 +302,11 @@ exports.getUserRequests = async (req, res) => {
   try {
     const requests = await Request.find({ user: req.user._id })
       .sort('-createdAt')
-      .populate('payment', 'status amount');
+      .select('_id documentType status createdAt updatedAt price paymentStatus commune');
 
     res.json({
       success: true,
-      requests
+      data: requests
     });
   } catch (error) {
     res.status(500).json({

@@ -5,7 +5,12 @@ const User = require('../models/User');
 const createAdmin = async () => {
   try {
     // Connexion à MongoDB
-    await mongoose.connect(process.env.MONGO_URI);
+    const mongoURI = process.env.MONGODB_URI.replace('test', 'MyAdminHome');
+    await mongoose.connect(mongoURI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      dbName: 'MyAdminHome'
+    });
     console.log('Connecté à MongoDB');
 
     // Données de l'administrateur
