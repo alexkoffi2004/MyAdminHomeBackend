@@ -26,7 +26,7 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['citizen', 'agent', 'admin'],
+    enum: ['citizen', 'agent', 'super_admin'],
     default: 'citizen'
   },
   phoneNumber: {
@@ -111,6 +111,11 @@ userSchema.methods.incrementRequestCount = async function() {
     this.dailyRequestCount += 1;
     await this.save();
   }
+};
+
+// Check if user is super admin
+userSchema.methods.isSuperAdmin = function() {
+  return this.role === 'super_admin';
 };
 
 module.exports = mongoose.model('User', userSchema); 
