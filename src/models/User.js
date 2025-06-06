@@ -38,8 +38,26 @@ const userSchema = new mongoose.Schema({
     trim: true
   },
   commune: {
-    type: String,
-    trim: true
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Commune',
+    required: function() {
+      return this.role === 'agent';
+    }
+  },
+  maxDailyRequests: {
+    type: Number,
+    default: 20,
+    required: function() {
+      return this.role === 'agent';
+    }
+  },
+  dailyRequestCount: {
+    type: Number,
+    default: 0
+  },
+  lastRequestCountReset: {
+    type: Date,
+    default: Date.now
   },
   isActive: {
     type: Boolean,
@@ -60,9 +78,39 @@ userSchema.pre('save', async function(next) {
   this.password = await bcrypt.hash(this.password, salt);
 });
 
+// Reset daily request count at midnight
+userSchema.pre('save', function(next) {
+  if (this.role === 'agent') {
+    const now = new Date();
+    const lastReset = new Date(this.lastRequestCountReset);
+    
+    if (now.getDate() !== lastReset.getDate() || 
+        now.getMonth() !== lastReset.getMonth() || 
+        now.getFullYear() !== lastReset.getFullYear()) {
+      this.dailyRequestCount = 0;
+      this.lastRequestCountReset = now;
+    }
+  }
+  next();
+});
+
 // Compare password method
 userSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
+};
+
+// Check if agent can accept more requests
+userSchema.methods.canAcceptMoreRequests = function() {
+  if (this.role !== 'agent') return false;
+  return this.dailyRequestCount < this.maxDailyRequests;
+};
+
+// Increment daily request count
+userSchema.methods.incrementRequestCount = async function() {
+  if (this.role === 'agent') {
+    this.dailyRequestCount += 1;
+    await this.save();
+  }
 };
 
 module.exports = mongoose.model('User', userSchema); 

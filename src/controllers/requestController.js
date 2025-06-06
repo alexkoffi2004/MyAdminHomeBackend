@@ -1,8 +1,10 @@
 const Request = require('../models/Request');
 const User = require('../models/User');
+const Commune = require('../models/Commune');
 const { uploadFile } = require('../services/cloudinaryService');
 const { createPaymentIntent, savePayment } = require('../services/stripeService');
 const { generateReceipt } = require('../services/pdfService');
+const { assignRequestToAgent } = require('../services/agentAssignmentService');
 
 // @desc    Créer une nouvelle demande
 // @route   POST /api/requests
@@ -26,6 +28,15 @@ exports.createRequest = async (req, res) => {
       deathPlace,
       deathCause
     } = req.body;
+
+    // Vérifier si la commune existe
+    const communeExists = await Commune.findById(commune);
+    if (!communeExists) {
+      return res.status(400).json({
+        success: false,
+        message: 'Commune non trouvée'
+      });
+    }
 
     // Calculer les prix
     const documentPrice = getDocumentPrice(documentType);
@@ -72,6 +83,17 @@ exports.createRequest = async (req, res) => {
       await request.save();
     }
 
+    // Assigner un agent à la demande
+    try {
+      const agent = await assignRequestToAgent(request._id, commune);
+      request.assignedTo = agent._id;
+      await request.save();
+    } catch (error) {
+      // Si aucun agent n'est disponible, la demande reste en attente
+      request.status = 'pending';
+      await request.save();
+    }
+
     // Créer l'intention de paiement
     const paymentIntent = await createPaymentIntent(totalPrice);
 
@@ -89,10 +111,55 @@ exports.createRequest = async (req, res) => {
     request.payment = payment._id;
     await request.save();
 
+    // Mettre à jour les statistiques de la commune
+    await Commune.findByIdAndUpdate(commune, {
+      $inc: {
+        totalRequests: 1,
+        pendingRequests: 1
+      }
+    });
+
     res.status(201).json({
       success: true,
       request,
       clientSecret: paymentIntent.client_secret
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// @desc    Obtenir les demandes d'un agent
+// @route   GET /api/requests/agent
+// @access  Private (Agent)
+exports.getAgentRequests = async (req, res) => {
+  try {
+    const { status, page = 1, limit = 10 } = req.query;
+    const query = {
+      assignedTo: req.user._id
+    };
+
+    if (status) {
+      query.status = status;
+    }
+
+    const requests = await Request.find(query)
+      .sort('-createdAt')
+      .populate('user', 'firstName lastName email')
+      .populate('payment', 'status amount')
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const count = await Request.countDocuments(query);
+
+    res.json({
+      success: true,
+      requests,
+      totalPages: Math.ceil(count / limit),
+      currentPage: page
     });
   } catch (error) {
     res.status(500).json({
