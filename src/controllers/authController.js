@@ -4,15 +4,19 @@ const jwt = require('jsonwebtoken');
 
 // Générer un token JWT
 const generateToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+  console.log('Génération du token pour l\'utilisateur:', userId);
+  const token = jwt.sign({ id: userId }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRE
   });
+  console.log('Token généré:', token);
+  return token;
 };
 
 // @desc    Inscription d'un citoyen
 // @route   POST /api/auth/register
 // @access  Public
 exports.register = catchAsync(async (req, res) => {
+  console.log('=== Début de l\'inscription ===');
   console.log('Données d\'inscription reçues:', req.body);
   
   const { firstName, lastName, email, password, phone, address } = req.body;
@@ -36,7 +40,7 @@ exports.register = catchAsync(async (req, res) => {
       password,
       phone,
       address,
-      role: 'user' // Rôle par défaut
+      role: 'citizen' // Rôle par défaut pour les inscriptions
     });
 
     console.log('Utilisateur créé avec succès:', {
@@ -74,65 +78,96 @@ exports.register = catchAsync(async (req, res) => {
 // @route   POST /api/auth/login
 // @access  Public
 exports.login = catchAsync(async (req, res) => {
+  console.log('=== Début de la connexion ===');
+  console.log('Données de connexion reçues:', req.body);
+  
   const { email, password } = req.body;
 
   // Vérifier si l'email et le mot de passe sont fournis
   if (!email || !password) {
+    console.log('Email ou mot de passe manquant');
     return res.status(400).json({
       success: false,
       message: 'Veuillez fournir un email et un mot de passe'
     });
   }
 
-  // Vérifier si l'utilisateur existe
-  const user = await User.findOne({ email }).select('+password');
-  if (!user) {
-    return res.status(401).json({
-      success: false,
-      message: 'Email ou mot de passe incorrect'
-    });
-  }
-
-  // Vérifier si le mot de passe est correct
-  const isMatch = await user.matchPassword(password);
-  if (!isMatch) {
-    return res.status(401).json({
-      success: false,
-      message: 'Email ou mot de passe incorrect'
-    });
-  }
-
-  // Générer le token
-  const token = generateToken(user._id);
-
-  // Retourner la réponse
-  res.status(200).json({
-    success: true,
-    token,
-    user: {
+  try {
+    // Vérifier si l'utilisateur existe
+    const user = await User.findOne({ email }).select('+password');
+    console.log('Utilisateur trouvé:', user ? {
       id: user._id,
-      firstName: user.firstName,
-      lastName: user.lastName,
       email: user.email,
       role: user.role
+    } : 'Non');
+
+    if (!user) {
+      console.log('Utilisateur non trouvé');
+      return res.status(401).json({
+        success: false,
+        message: 'Email ou mot de passe incorrect'
+      });
     }
-  });
+
+    // Vérifier si le mot de passe est correct
+    console.log('Vérification du mot de passe...');
+    const isMatch = await user.matchPassword(password);
+    console.log('Mot de passe correct:', isMatch ? 'Oui' : 'Non');
+
+    if (!isMatch) {
+      console.log('Mot de passe incorrect');
+      return res.status(401).json({
+        success: false,
+        message: 'Email ou mot de passe incorrect'
+      });
+    }
+
+    // Générer le token
+    const token = generateToken(user._id);
+    console.log('Connexion réussie pour l\'utilisateur:', {
+      id: user._id,
+      email: user.email,
+      role: user.role
+    });
+
+    res.status(200).json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Erreur lors de la connexion:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la connexion',
+      error: error.message
+    });
+  }
 });
 
 // @desc    Obtenir l'utilisateur connecté
 // @route   GET /api/auth/me
 // @access  Private
 exports.getMe = catchAsync(async (req, res) => {
+  console.log('=== Récupération des informations utilisateur ===');
+  console.log('ID utilisateur:', req.user.id);
+  
   const user = await User.findById(req.user.id);
+  console.log('Utilisateur trouvé:', user ? {
+    id: user._id,
+    email: user.email,
+    role: user.role
+  } : 'Non');
+
   res.status(200).json({
     success: true,
-    user: {
-      id: user._id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      role: user.role
-    }
+    data: user
   });
 });
 

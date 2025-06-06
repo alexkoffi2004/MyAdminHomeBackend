@@ -8,20 +8,99 @@ const { assignRequestToAgent } = require('../services/agentAssignmentService');
 const asyncHandler = require('../middleware/async');
 const ErrorResponse = require('../utils/errorResponse');
 const { catchAsync } = require('../utils/errorHandler');
+const cloudinary = require('cloudinary');
+
+// Fonction helper pour obtenir le prix des documents
+const getDocumentPrice = (documentType) => {
+  const prices = {
+    birth_certificate: 2000,
+    marriage_certificate: 2000,
+    death_certificate: 2000,
+    nationality_certificate: 2000,
+    residence_certificate: 2000,
+    criminal_record: 2000
+  };
+  return prices[documentType] || 0;
+};
 
 // @desc    Créer une nouvelle demande
 // @route   POST /api/requests
 // @access  Private (Citoyen)
 exports.createRequest = catchAsync(async (req, res) => {
-  const request = await Request.create({
-    ...req.body,
-    user: req.user.id
-  });
+  try {
+    // Vérifier si un fichier d'identité a été uploadé
+    let identityDocumentUrl = null;
+    if (req.file) {
+      identityDocumentUrl = req.file.path;
+    }
 
-  res.status(201).json({
-    success: true,
-    data: request
-  });
+    // Calculer le prix
+    const documentPrice = getDocumentPrice(req.body.documentType);
+    const deliveryFee = req.body.deliveryMethod === 'delivery' ? 2000 : 0;
+    const totalPrice = documentPrice + deliveryFee;
+
+    // Créer la demande avec les données du formulaire
+    const requestData = {
+      documentType: req.body.documentType,
+      commune: req.body.commune,
+      fullName: req.body.fullName,
+      birthDate: req.body.birthDate,
+      birthPlace: req.body.birthPlace,
+      fatherName: req.body.fatherName,
+      motherName: req.body.motherName,
+      deliveryMethod: req.body.deliveryMethod,
+      address: req.body.address,
+      phoneNumber: req.body.phoneNumber,
+      identityDocument: identityDocumentUrl,
+      status: 'en_attente',
+      user: req.user.id,
+      price: totalPrice
+    };
+
+    // Créer la demande dans la base de données
+    const request = await Request.create(requestData);
+
+    // Si la demande nécessite un paiement, créer une intention de paiement
+    if (totalPrice > 0) {
+      try {
+        const paymentIntent = await createPaymentIntent({
+          amount: Math.round(totalPrice), // S'assurer que c'est un nombre entier
+          requestId: request._id,
+          userId: req.user.id
+        });
+
+        // Mettre à jour la demande avec l'ID de l'intention de paiement
+        request.paymentIntentId = paymentIntent.id;
+        await request.save();
+      } catch (paymentError) {
+        console.error('Payment intent creation error:', paymentError);
+        // Supprimer la demande si la création de l'intention de paiement échoue
+        await request.deleteOne();
+        throw new Error(`Erreur lors de la création de l'intention de paiement: ${paymentError.message}`);
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      data: request
+    });
+  } catch (error) {
+    console.error('Error creating request:', error);
+    
+    // Si une erreur survient après l'upload du fichier, supprimer le fichier
+    if (req.file) {
+      try {
+        await cloudinary.uploader.destroy(req.file.filename);
+      } catch (deleteError) {
+        console.error('Error deleting uploaded file:', deleteError);
+      }
+    }
+
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Une erreur est survenue lors de la création de la demande'
+    });
+  }
 });
 
 // @desc    Obtenir toutes les demandes d'un citoyen
@@ -262,16 +341,89 @@ exports.getAllRequests = async (req, res) => {
   }
 };
 
-// Fonction utilitaire pour obtenir le prix d'un document
-const getDocumentPrice = (documentType) => {
-  switch (documentType) {
-    case 'birth_certificate':
-      return 1000;
-    case 'birth_declaration':
-      return 1500;
-    case 'death_certificate':
-      return 1500;
-    default:
-      return 0;
+// @desc    Obtenir les statistiques des demandes d'un citoyen
+// @route   GET /api/requests/statistics
+// @access  Private (Citoyen)
+exports.getStatistics = catchAsync(async (req, res) => {
+  try {
+    console.log('Fetching statistics for user:', req.user.id);
+
+    // Obtenir toutes les demandes de l'utilisateur
+    const requests = await Request.find({ user: req.user.id });
+    console.log('Found requests:', requests.length);
+
+    // Calculer les statistiques
+    const totalRequests = requests.length;
+    const pendingRequests = requests.filter(r => r.status === 'en_attente').length;
+    const completedRequests = requests.filter(r => r.status === 'terminee').length;
+    const rejectedRequests = requests.filter(r => r.status === 'rejetee').length;
+
+    console.log('Calculated statistics:', {
+      totalRequests,
+      pendingRequests,
+      completedRequests,
+      rejectedRequests
+    });
+
+    // Obtenir les 5 demandes les plus récentes
+    const recentRequests = await Request.find({ user: req.user.id })
+      .sort('-createdAt')
+      .limit(5)
+      .select('_id documentType status createdAt updatedAt');
+
+    console.log('Recent requests:', recentRequests);
+
+    // Calculer les statistiques par type de document
+    const documentsByType = requests.reduce((acc, request) => {
+      const type = request.documentType;
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {});
+
+    // Convertir en tableau pour l'API
+    const documentsByTypeArray = Object.entries(documentsByType).map(([type, count]) => ({
+      type,
+      count
+    }));
+
+    console.log('Documents by type:', documentsByTypeArray);
+
+    // Calculer les statistiques par statut
+    const requestsByStatus = requests.reduce((acc, request) => {
+      const status = request.status;
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {});
+
+    // Convertir en tableau pour l'API
+    const requestsByStatusArray = Object.entries(requestsByStatus).map(([status, count]) => ({
+      status,
+      count
+    }));
+
+    console.log('Requests by status:', requestsByStatusArray);
+
+    const responseData = {
+      totalRequests,
+      pendingRequests,
+      completedRequests,
+      rejectedRequests,
+      recentRequests,
+      documentsByType: documentsByTypeArray,
+      requestsByStatus: requestsByStatusArray
+    };
+
+    console.log('Sending response:', responseData);
+
+    res.status(200).json({
+      success: true,
+      data: responseData
+    });
+  } catch (error) {
+    console.error('Error getting statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Une erreur est survenue lors de la récupération des statistiques'
+    });
   }
-}; 
+}); 

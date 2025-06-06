@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const requestSchema = new mongoose.Schema({
-  citizen: {
+  user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
@@ -9,7 +9,14 @@ const requestSchema = new mongoose.Schema({
   documentType: {
     type: String,
     required: [true, 'Le type de document est requis'],
-    enum: ['birth_certificate', 'death_certificate', 'birth_declaration', 'identity_document']
+    enum: [
+      'birth_certificate',
+      'marriage_certificate',
+      'death_certificate',
+      'nationality_certificate',
+      'residence_certificate',
+      'criminal_record'
+    ]
   },
   status: {
     type: String,
@@ -17,64 +24,58 @@ const requestSchema = new mongoose.Schema({
     default: 'en_attente'
   },
   commune: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Commune',
-    required: true
-  },
-  agent: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    type: String,
+    required: [true, 'La commune est requise']
   },
   // Informations personnelles
   fullName: {
     type: String,
-    required: true
+    required: [true, 'Le nom complet est requis']
   },
   birthDate: {
     type: Date,
-    required: true
+    required: [true, 'La date de naissance est requise']
   },
   birthPlace: {
     type: String,
-    required: true
+    required: [true, 'Le lieu de naissance est requis']
   },
   fatherName: {
-    type: String,
-    required: true
+    type: String
   },
   motherName: {
-    type: String,
-    required: true
+    type: String
   },
+  // Informations de contact
   phoneNumber: {
-    type: String,
-    required: true
+    type: String
   },
-  address: String,
+  address: {
+    type: String
+  },
   // Méthode de livraison
   deliveryMethod: {
     type: String,
-    enum: ['pickup', 'delivery'],
+    enum: ['download', 'pickup', 'delivery'],
+    required: [true, 'La méthode de livraison est requise']
+  },
+  // Document d'identité
+  identityDocument: {
+    type: String,
+    required: [true, 'Le document d\'identité est requis']
+  },
+  // Prix et paiement
+  price: {
+    type: Number,
     required: true
   },
-  // Documents spécifiques selon le type
-  documents: {
-    oldBirthCertificate: String,
-    deathCertificate: String,
-    deathMedicalCertificate: String,
-    deceasedIdentityDocument: String,
-    identityDocument: String
+  paymentIntentId: {
+    type: String
   },
-  // Informations spécifiques pour les certificats de décès
-  deathInfo: {
-    deathDate: Date,
-    deathPlace: String,
-    deathCause: String
-  },
-  // Informations spécifiques pour les déclarations de naissance
-  birthDeclarationInfo: {
-    declarantName: String,
-    declarantRelation: String
+  paymentStatus: {
+    type: String,
+    enum: ['pending', 'completed', 'failed'],
+    default: 'pending'
   },
   // Suivi de la demande
   tracking: {
@@ -87,12 +88,13 @@ const requestSchema = new mongoose.Schema({
     rejectedAt: Date,
     rejectionReason: String
   },
-  comments: [{
-    user: {
+  // Notes et commentaires
+  notes: [{
+    content: String,
+    author: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
     },
-    text: String,
     createdAt: {
       type: Date,
       default: Date.now
@@ -103,7 +105,7 @@ const requestSchema = new mongoose.Schema({
 });
 
 // Index pour la recherche
-requestSchema.index({ citizen: 1, status: 1 });
+requestSchema.index({ user: 1, status: 1 });
 requestSchema.index({ documentType: 1, status: 1 });
 requestSchema.index({ commune: 1, status: 1 });
 requestSchema.index({ 'tracking.submittedAt': -1 });

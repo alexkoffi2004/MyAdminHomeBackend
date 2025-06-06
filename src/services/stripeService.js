@@ -2,19 +2,29 @@ const stripe = require('../config/stripe');
 const Payment = require('../models/Payment');
 
 // Créer une intention de paiement
-const createPaymentIntent = async (amount, currency = 'XOF') => {
+const createPaymentIntent = async ({ amount, currency = 'XOF', requestId, userId }) => {
   try {
+    // S'assurer que le montant est un nombre entier
+    const amountInCents = Math.round(Number(amount) * 100);
+    
+    if (isNaN(amountInCents)) {
+      throw new Error('Le montant doit être un nombre valide');
+    }
+
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: amount * 100, // Stripe utilise les centimes
+      amount: amountInCents,
       currency: currency,
-      payment_method_types: ['card', 'mobile_money'],
+      payment_method_types: ['card'],
       metadata: {
+        requestId: requestId.toString(),
+        userId: userId.toString(),
         integration_check: 'accept_a_payment'
       }
     });
 
     return paymentIntent;
   } catch (error) {
+    console.error('Stripe payment intent creation error:', error);
     throw new Error(`Erreur lors de la création de l'intention de paiement: ${error.message}`);
   }
 };

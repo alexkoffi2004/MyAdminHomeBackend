@@ -2,42 +2,44 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const userSchema = new mongoose.Schema({
+const UserSchema = new mongoose.Schema({
   firstName: {
     type: String,
-    required: [true, 'Le prénom est requis'],
+    required: [true, 'Veuillez fournir un prénom'],
     trim: true
   },
   lastName: {
     type: String,
-    required: [true, 'Le nom est requis'],
+    required: [true, 'Veuillez fournir un nom'],
     trim: true
   },
   email: {
     type: String,
-    required: [true, 'L\'email est requis'],
+    required: [true, 'Veuillez fournir un email'],
     unique: true,
-    lowercase: true,
-    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Veuillez fournir un email valide']
+    match: [
+      /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+      'Veuillez fournir un email valide'
+    ]
   },
   password: {
     type: String,
-    required: [true, 'Le mot de passe est requis'],
-    minlength: [6, 'Le mot de passe doit contenir au moins 6 caractères'],
+    required: [true, 'Veuillez fournir un mot de passe'],
+    minlength: 6,
     select: false
   },
   phone: {
     type: String,
-    required: [true, 'Le numéro de téléphone est requis']
+    required: [true, 'Veuillez fournir un numéro de téléphone']
   },
   address: {
     type: String,
-    required: [true, 'L\'adresse est requise']
+    required: [true, 'Veuillez fournir une adresse']
   },
   role: {
     type: String,
-    enum: ['user', 'agent', 'admin'],
-    default: 'user'
+    enum: ['citizen', 'agent', 'admin'],
+    default: 'citizen'
   },
   createdAt: {
     type: Date,
@@ -76,7 +78,7 @@ const userSchema = new mongoose.Schema({
 });
 
 // Encrypter le mot de passe avant de sauvegarder
-userSchema.pre('save', async function(next) {
+UserSchema.pre('save', async function(next) {
   if (!this.isModified('password')) {
     next();
   }
@@ -86,7 +88,7 @@ userSchema.pre('save', async function(next) {
 });
 
 // Reset daily request count at midnight
-userSchema.pre('save', function(next) {
+UserSchema.pre('save', function(next) {
   if (this.role === 'agent') {
     const now = new Date();
     const lastReset = new Date(this.lastRequestCountReset);
@@ -101,26 +103,37 @@ userSchema.pre('save', function(next) {
   next();
 });
 
-// Comparer le mot de passe entré avec le mot de passe hashé
-userSchema.methods.matchPassword = async function(enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+// Match user entered password to hashed password in database
+UserSchema.methods.matchPassword = async function(enteredPassword) {
+  console.log('Comparaison des mots de passe...');
+  console.log('Mot de passe entré:', enteredPassword);
+  console.log('Mot de passe hashé:', this.password);
+  
+  try {
+    const isMatch = await bcrypt.compare(enteredPassword, this.password);
+    console.log('Résultat de la comparaison:', isMatch);
+    return isMatch;
+  } catch (error) {
+    console.error('Erreur lors de la comparaison des mots de passe:', error);
+    throw error;
+  }
 };
 
-// Générer un token JWT
-userSchema.methods.getSignedJwtToken = function() {
+// Sign JWT and return
+UserSchema.methods.getSignedJwtToken = function() {
   return jwt.sign({ id: this._id }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRE
   });
 };
 
 // Check if agent can accept more requests
-userSchema.methods.canAcceptMoreRequests = function() {
+UserSchema.methods.canAcceptMoreRequests = function() {
   if (this.role !== 'agent') return false;
   return this.dailyRequestCount < this.maxDailyRequests;
 };
 
 // Increment daily request count
-userSchema.methods.incrementRequestCount = async function() {
+UserSchema.methods.incrementRequestCount = async function() {
   if (this.role === 'agent') {
     this.dailyRequestCount += 1;
     await this.save();
@@ -128,8 +141,8 @@ userSchema.methods.incrementRequestCount = async function() {
 };
 
 // Check if user is super admin
-userSchema.methods.isSuperAdmin = function() {
+UserSchema.methods.isSuperAdmin = function() {
   return this.role === 'admin';
 };
 
-module.exports = mongoose.model('User', userSchema); 
+module.exports = mongoose.model('User', UserSchema); 

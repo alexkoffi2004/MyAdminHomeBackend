@@ -28,15 +28,26 @@ const deleteFile = async (publicId) => {
 // Fonction pour uploader un fichier
 const uploadFile = async (file) => {
   try {
-    const result = await cloudinary.uploader.upload(file.path, {
+    // Si le fichier a déjà été uploadé via Multer, retourner directement l'URL
+    if (file.url) {
+      return {
+        url: file.url,
+        publicId: file.public_id
+      };
+    }
+
+    // Sinon, uploader le fichier
+    const result = await cloudinary.uploader.upload(file.buffer, {
       folder: 'myadminhome',
       resource_type: 'auto'
     });
+
     return {
       url: result.secure_url,
       publicId: result.public_id
     };
   } catch (error) {
+    console.error('Error uploading file:', error);
     throw new Error(`Erreur lors de l'upload du fichier: ${error.message}`);
   }
 };
