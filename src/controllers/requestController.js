@@ -5,132 +5,125 @@ const { uploadFile } = require('../services/cloudinaryService');
 const { createPaymentIntent, savePayment } = require('../services/stripeService');
 const { generateReceipt } = require('../services/pdfService');
 const { assignRequestToAgent } = require('../services/agentAssignmentService');
+const asyncHandler = require('../middleware/async');
+const ErrorResponse = require('../utils/errorResponse');
+const { catchAsync } = require('../utils/errorHandler');
 
 // @desc    Créer une nouvelle demande
 // @route   POST /api/requests
-// @access  Private
-exports.createRequest = async (req, res) => {
-  try {
-    const {
-      documentType,
-      commune,
-      fullName,
-      birthDate,
-      birthPlace,
-      fatherName,
-      motherName,
-      deliveryMethod,
-      address,
-      phoneNumber,
-      declarantName,
-      declarantRelation,
-      deathDate,
-      deathPlace,
-      deathCause
-    } = req.body;
+// @access  Private (Citoyen)
+exports.createRequest = catchAsync(async (req, res) => {
+  const request = await Request.create({
+    ...req.body,
+    user: req.user.id
+  });
 
-    // Vérifier si la commune existe
-    const communeExists = await Commune.findById(commune);
-    if (!communeExists) {
-      return res.status(400).json({
-        success: false,
-        message: 'Commune non trouvée'
-      });
-    }
+  res.status(201).json({
+    success: true,
+    data: request
+  });
+});
 
-    // Calculer les prix
-    const documentPrice = getDocumentPrice(documentType);
-    const deliveryFee = deliveryMethod === 'delivery' ? 2000 : 0;
-    const totalPrice = documentPrice + deliveryFee;
+// @desc    Obtenir toutes les demandes d'un citoyen
+// @route   GET /api/requests
+// @access  Private (Citoyen)
+exports.getRequests = catchAsync(async (req, res) => {
+  const requests = await Request.find({ user: req.user.id });
 
-    // Créer la demande
-    const request = await Request.create({
-      user: req.user._id,
-      documentType,
-      commune,
-      fullName,
-      birthDate,
-      birthPlace,
-      fatherName,
-      motherName,
-      deliveryMethod,
-      address,
-      phoneNumber,
-      declarantName,
-      declarantRelation,
-      deathDate,
-      deathPlace,
-      deathCause,
-      documentPrice,
-      deliveryFee,
-      totalPrice
-    });
+  res.status(200).json({
+    success: true,
+    count: requests.length,
+    data: requests
+  });
+});
 
-    // Upload des documents si présents
-    if (req.files) {
-      const documents = [];
-      for (const [type, files] of Object.entries(req.files)) {
-        if (files && files.length > 0) {
-          const result = await uploadFile(files[0]);
-          documents.push({
-            type,
-            url: result.url,
-            publicId: result.publicId
-          });
-        }
-      }
-      request.documents = documents;
-      await request.save();
-    }
+// @desc    Obtenir une demande spécifique
+// @route   GET /api/requests/:id
+// @access  Private (Citoyen, Agent, Admin)
+exports.getRequest = catchAsync(async (req, res) => {
+  const request = await Request.findById(req.params.id);
 
-    // Assigner un agent à la demande
-    try {
-      const agent = await assignRequestToAgent(request._id, commune);
-      request.assignedTo = agent._id;
-      await request.save();
-    } catch (error) {
-      // Si aucun agent n'est disponible, la demande reste en attente
-      request.status = 'pending';
-      await request.save();
-    }
-
-    // Créer l'intention de paiement
-    const paymentIntent = await createPaymentIntent(totalPrice);
-
-    // Enregistrer le paiement
-    const payment = await savePayment({
-      request: request._id,
-      user: req.user._id,
-      amount: totalPrice,
-      paymentMethod: 'card',
-      status: 'pending',
-      stripePaymentId: paymentIntent.id
-    });
-
-    // Mettre à jour la demande avec le paiement
-    request.payment = payment._id;
-    await request.save();
-
-    // Mettre à jour les statistiques de la commune
-    await Commune.findByIdAndUpdate(commune, {
-      $inc: {
-        totalRequests: 1,
-        pendingRequests: 1
-      }
-    });
-
-    res.status(201).json({
-      success: true,
-      request,
-      clientSecret: paymentIntent.client_secret
-    });
-  } catch (error) {
-    res.status(500).json({
+  if (!request) {
+    return res.status(404).json({
       success: false,
-      message: error.message
+      message: 'Demande non trouvée'
     });
   }
-};
+
+  // Vérifier si l'utilisateur est le propriétaire de la demande
+  if (request.user.toString() !== req.user.id) {
+    return res.status(401).json({
+      success: false,
+      message: 'Non autorisé à accéder à cette demande'
+    });
+  }
+
+  res.status(200).json({
+    success: true,
+    data: request
+  });
+});
+
+// @desc    Mettre à jour une demande
+// @route   PUT /api/requests/:id
+// @access  Private (Citoyen, Agent, Admin)
+exports.updateRequest = catchAsync(async (req, res) => {
+  let request = await Request.findById(req.params.id);
+
+  if (!request) {
+    return res.status(404).json({
+      success: false,
+      message: 'Demande non trouvée'
+    });
+  }
+
+  // Vérifier si l'utilisateur est le propriétaire de la demande
+  if (request.user.toString() !== req.user.id) {
+    return res.status(401).json({
+      success: false,
+      message: 'Non autorisé à modifier cette demande'
+    });
+  }
+
+  request = await Request.findByIdAndUpdate(req.params.id, req.body, {
+    new: true,
+    runValidators: true
+  });
+
+  res.status(200).json({
+    success: true,
+    data: request
+  });
+});
+
+// @desc    Supprimer une demande
+// @route   DELETE /api/requests/:id
+// @access  Private (Citoyen, Admin)
+exports.deleteRequest = catchAsync(async (req, res) => {
+  const request = await Request.findById(req.params.id);
+
+  if (!request) {
+    return res.status(404).json({
+      success: false,
+      message: 'Demande non trouvée'
+    });
+  }
+
+  // Vérifier si l'utilisateur est le propriétaire de la demande
+  if (request.user.toString() !== req.user.id) {
+    return res.status(401).json({
+      success: false,
+      message: 'Non autorisé à supprimer cette demande'
+    });
+  }
+
+  await request.deleteOne();
+
+  res.status(200).json({
+    success: true,
+    data: {}
+  });
+});
 
 // @desc    Obtenir les demandes d'un agent
 // @route   GET /api/requests/agent
@@ -181,45 +174,6 @@ exports.getUserRequests = async (req, res) => {
     res.json({
       success: true,
       requests
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// @desc    Obtenir une demande spécifique
-// @route   GET /api/requests/:id
-// @access  Private
-exports.getRequest = async (req, res) => {
-  try {
-    const request = await Request.findById(req.params.id)
-      .populate('user', 'firstName lastName email')
-      .populate('payment', 'status amount')
-      .populate('assignedTo', 'firstName lastName');
-
-    if (!request) {
-      return res.status(404).json({
-        success: false,
-        message: 'Demande non trouvée'
-      });
-    }
-
-    // Vérifier si l'utilisateur est autorisé à voir cette demande
-    if (request.user._id.toString() !== req.user._id.toString() && 
-        req.user.role !== 'agent' && 
-        req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Non autorisé à accéder à cette demande'
-      });
-    }
-
-    res.json({
-      success: true,
-      request
     });
   } catch (error) {
     res.status(500).json({

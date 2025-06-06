@@ -1,20 +1,20 @@
 const express = require('express');
 const router = express.Router();
-const { protect } = require('../middleware/auth');
 const {
   createRequest,
-  getRequests,
+  getMyRequests,
   getRequest,
   updateRequest,
   deleteRequest
 } = require('../controllers/requestController');
+const { protect } = require('../middleware/auth');
 
-// Toutes les routes sont protégées
+// Toutes les routes nécessitent d'être authentifié
 router.use(protect);
 
 router.route('/')
-  .get(getRequests)
-  .post(createRequest);
+  .post(createRequest)
+  .get(getMyRequests);
 
 router.route('/:id')
   .get(getRequest)

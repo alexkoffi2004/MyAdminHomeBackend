@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const userSchema = new mongoose.Schema({
   firstName: {
@@ -16,26 +17,31 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: [true, 'L\'email est requis'],
     unique: true,
-    trim: true,
-    lowercase: true
+    lowercase: true,
+    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Veuillez fournir un email valide']
   },
   password: {
     type: String,
     required: [true, 'Le mot de passe est requis'],
-    minlength: [6, 'Le mot de passe doit contenir au moins 6 caractères']
+    minlength: [6, 'Le mot de passe doit contenir au moins 6 caractères'],
+    select: false
   },
-  role: {
+  phone: {
     type: String,
-    enum: ['citizen', 'agent', 'super_admin'],
-    default: 'citizen'
-  },
-  phoneNumber: {
-    type: String,
-    trim: true
+    required: [true, 'Le numéro de téléphone est requis']
   },
   address: {
     type: String,
-    trim: true
+    required: [true, 'L\'adresse est requise']
+  },
+  role: {
+    type: String,
+    enum: ['user', 'agent', 'admin'],
+    default: 'user'
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
   },
   commune: {
     type: mongoose.Schema.Types.ObjectId,
@@ -69,11 +75,12 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Hash password before saving
+// Encrypter le mot de passe avant de sauvegarder
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) {
     next();
   }
+
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
 });
@@ -94,9 +101,16 @@ userSchema.pre('save', function(next) {
   next();
 });
 
-// Compare password method
+// Comparer le mot de passe entré avec le mot de passe hashé
 userSchema.methods.matchPassword = async function(enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
+};
+
+// Générer un token JWT
+userSchema.methods.getSignedJwtToken = function() {
+  return jwt.sign({ id: this._id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRE
+  });
 };
 
 // Check if agent can accept more requests
@@ -115,7 +129,7 @@ userSchema.methods.incrementRequestCount = async function() {
 
 // Check if user is super admin
 userSchema.methods.isSuperAdmin = function() {
-  return this.role === 'super_admin';
+  return this.role === 'admin';
 };
 
 module.exports = mongoose.model('User', userSchema); 

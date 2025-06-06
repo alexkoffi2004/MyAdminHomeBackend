@@ -7,6 +7,10 @@ const communeSchema = new mongoose.Schema({
     unique: true,
     trim: true
   },
+  description: {
+    type: String,
+    trim: true
+  },
   region: {
     type: String,
     required: [true, 'La région est requise'],

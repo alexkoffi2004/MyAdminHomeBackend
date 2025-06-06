@@ -3,6 +3,113 @@ const fs = require('fs');
 const path = require('path');
 const cloudinary = require('../config/cloudinary');
 
+// Créer le dossier uploads s'il n'existe pas
+const uploadsDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Générer un acte de naissance
+const generateBirthCertificate = async (data) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({
+        size: 'A4',
+        margin: 50
+      });
+
+      const fileName = `birth_certificate_${data._id}.pdf`;
+      const filePath = path.join(uploadsDir, fileName);
+      const stream = fs.createWriteStream(filePath);
+
+      doc.pipe(stream);
+
+      // En-tête
+      doc.fontSize(20).text('ACTE DE NAISSANCE', { align: 'center' });
+      doc.moveDown();
+
+      // Informations
+      doc.fontSize(12);
+      doc.text(`Nom et prénoms: ${data.fullName}`);
+      doc.text(`Date de naissance: ${new Date(data.birthDate).toLocaleDateString()}`);
+      doc.text(`Lieu de naissance: ${data.birthPlace}`);
+      doc.text(`Nom du père: ${data.fatherName}`);
+      doc.text(`Nom de la mère: ${data.motherName}`);
+      doc.moveDown();
+
+      // Signature
+      doc.text('Signature et cachet de l\'officier d\'état civil', { align: 'right' });
+      doc.moveDown();
+      doc.text(`Date de délivrance: ${new Date().toLocaleDateString()}`);
+
+      doc.end();
+
+      stream.on('finish', () => {
+        resolve({
+          fileName,
+          filePath
+        });
+      });
+
+      stream.on('error', (err) => {
+        reject(err);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
+
+// Générer un certificat de décès
+const generateDeathCertificate = async (data) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({
+        size: 'A4',
+        margin: 50
+      });
+
+      const fileName = `death_certificate_${data._id}.pdf`;
+      const filePath = path.join(uploadsDir, fileName);
+      const stream = fs.createWriteStream(filePath);
+
+      doc.pipe(stream);
+
+      // En-tête
+      doc.fontSize(20).text('CERTIFICAT DE DECES', { align: 'center' });
+      doc.moveDown();
+
+      // Informations
+      doc.fontSize(12);
+      doc.text(`Nom et prénoms du défunt: ${data.fullName}`);
+      doc.text(`Date de décès: ${new Date(data.deathInfo.deathDate).toLocaleDateString()}`);
+      doc.text(`Lieu de décès: ${data.deathInfo.deathPlace}`);
+      doc.text(`Cause du décès: ${data.deathInfo.deathCause}`);
+      doc.moveDown();
+
+      // Signature
+      doc.text('Signature et cachet de l\'officier d\'état civil', { align: 'right' });
+      doc.moveDown();
+      doc.text(`Date de délivrance: ${new Date().toLocaleDateString()}`);
+
+      doc.end();
+
+      stream.on('finish', () => {
+        resolve({
+          fileName,
+          filePath
+        });
+      });
+
+      stream.on('error', (err) => {
+        reject(err);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
+
 // Générer un reçu de paiement
 const generateReceipt = async (payment, request, user) => {
   return new Promise(async (resolve, reject) => {
@@ -84,5 +191,7 @@ const generateReceipt = async (payment, request, user) => {
 };
 
 module.exports = {
-  generateReceipt
+  generateReceipt,
+  generateBirthCertificate,
+  generateDeathCertificate
 }; 

@@ -1,11 +1,14 @@
 const jwt = require('jsonwebtoken');
+const asyncHandler = require('./async');
+const ErrorResponse = require('../utils/errorResponse');
 const User = require('../models/User');
 
-// Middleware pour protéger les routes
+// Protect routes
 exports.protect = async (req, res, next) => {
   try {
     let token;
 
+    // Vérifier si le token est présent dans les headers
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
       token = req.headers.authorization.split(' ')[1];
     }
@@ -20,12 +23,14 @@ exports.protect = async (req, res, next) => {
     try {
       // Vérifier le token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      // Ajouter l'utilisateur à la requête
       req.user = await User.findById(decoded.id);
       next();
     } catch (err) {
       return res.status(401).json({
         success: false,
-        message: 'Non autorisé à accéder à cette route'
+        message: 'Token invalide'
       });
     }
   } catch (error) {
@@ -33,14 +38,16 @@ exports.protect = async (req, res, next) => {
   }
 };
 
-// Middleware pour vérifier les rôles
+// Grant access to specific roles
 exports.authorize = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
-      return res.status(403).json({
-        success: false,
-        message: `Le rôle ${req.user.role} n'est pas autorisé à accéder à cette route`
-      });
+      return next(
+        new ErrorResponse(
+          `Le rôle ${req.user.role} n'est pas autorisé à accéder à cette route`,
+          403
+        )
+      );
     }
     next();
   };

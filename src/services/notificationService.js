@@ -13,35 +13,46 @@ const NOTIFICATION_TYPES = {
 };
 
 // Créer une notification
-const createNotification = async (userId, type, title, message, data = {}) => {
+const createNotification = async (data) => {
   try {
-    const notification = await Notification.create({
-      user: userId,
-      type,
-      title,
-      message,
-      data
-    });
-
-    // Envoyer un email si nécessaire
-    if (type === NOTIFICATION_TYPES.REQUEST_COMPLETED || 
-        type === NOTIFICATION_TYPES.DOCUMENT_GENERATED) {
-      const user = await User.findById(userId);
-      await sendEmail(
-        user.email,
-        title,
-        `<h1>${title}</h1><p>${message}</p>`
-      );
-    }
-
+    const notification = await Notification.create(data);
     return notification;
   } catch (error) {
-    throw new Error(`Erreur lors de la création de la notification: ${error.message}`);
+    console.error('Erreur lors de la création de la notification:', error);
+    throw error;
+  }
+};
+
+// Obtenir les notifications d'un utilisateur
+const getUserNotifications = async (userId, { page = 1, limit = 10, unreadOnly = false }) => {
+  try {
+    const query = { user: userId };
+    if (unreadOnly) {
+      query.read = false;
+    }
+
+    const notifications = await Notification.find(query)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('request', 'documentType status');
+
+    const total = await Notification.countDocuments(query);
+
+    return {
+      notifications,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit)
+    };
+  } catch (error) {
+    console.error('Erreur lors de la récupération des notifications:', error);
+    throw error;
   }
 };
 
 // Marquer une notification comme lue
-const markNotificationAsRead = async (notificationId, userId) => {
+const markAsRead = async (notificationId, userId) => {
   try {
     const notification = await Notification.findOneAndUpdate(
       { _id: notificationId, user: userId },
@@ -55,55 +66,21 @@ const markNotificationAsRead = async (notificationId, userId) => {
 
     return notification;
   } catch (error) {
-    throw new Error(`Erreur lors de la mise à jour de la notification: ${error.message}`);
+    console.error('Erreur lors du marquage de la notification comme lue:', error);
+    throw error;
   }
 };
 
 // Marquer toutes les notifications comme lues
-const markAllNotificationsAsRead = async (userId) => {
+const markAllAsRead = async (userId) => {
   try {
     await Notification.updateMany(
       { user: userId, read: false },
       { read: true }
     );
   } catch (error) {
-    throw new Error(`Erreur lors de la mise à jour des notifications: ${error.message}`);
-  }
-};
-
-// Obtenir les notifications non lues
-const getUnreadNotifications = async (userId) => {
-  try {
-    return await Notification.find({
-      user: userId,
-      read: false
-    }).sort({ createdAt: -1 });
-  } catch (error) {
-    throw new Error(`Erreur lors de la récupération des notifications: ${error.message}`);
-  }
-};
-
-// Obtenir toutes les notifications
-const getAllNotifications = async (userId, page = 1, limit = 10) => {
-  try {
-    const skip = (page - 1) * limit;
-    const notifications = await Notification.find({ user: userId })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Notification.countDocuments({ user: userId });
-
-    return {
-      notifications,
-      pagination: {
-        total,
-        page,
-        pages: Math.ceil(total / limit)
-      }
-    };
-  } catch (error) {
-    throw new Error(`Erreur lors de la récupération des notifications: ${error.message}`);
+    console.error('Erreur lors du marquage de toutes les notifications comme lues:', error);
+    throw error;
   }
 };
 
@@ -121,26 +98,16 @@ const deleteNotification = async (notificationId, userId) => {
 
     return notification;
   } catch (error) {
-    throw new Error(`Erreur lors de la suppression de la notification: ${error.message}`);
-  }
-};
-
-// Supprimer toutes les notifications
-const deleteAllNotifications = async (userId) => {
-  try {
-    await Notification.deleteMany({ user: userId });
-  } catch (error) {
-    throw new Error(`Erreur lors de la suppression des notifications: ${error.message}`);
+    console.error('Erreur lors de la suppression de la notification:', error);
+    throw error;
   }
 };
 
 module.exports = {
   NOTIFICATION_TYPES,
   createNotification,
-  markNotificationAsRead,
-  markAllNotificationsAsRead,
-  getUnreadNotifications,
-  getAllNotifications,
-  deleteNotification,
-  deleteAllNotifications
+  getUserNotifications,
+  markAsRead,
+  markAllAsRead,
+  deleteNotification
 }; 
