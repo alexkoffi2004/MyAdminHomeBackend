@@ -13,6 +13,7 @@ const path = require('path');
 
 // Routes
 const routes = require('./routes');
+const webhookRoutes = require('./routes/webhookRoutes');
 
 // Middleware d'erreur
 const errorHandler = require('./middleware/error');
@@ -36,6 +37,12 @@ app.use('/api', limiter);
 // Middleware
 app.use(cors());
 app.use(morgan('dev'));
+
+// Configuration spéciale pour les webhooks Stripe
+app.use('/api/webhooks', express.raw({ type: 'application/json' }));
+app.use('/api/webhooks', webhookRoutes);
+
+// Middleware pour les autres routes
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());

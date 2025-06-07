@@ -68,7 +68,14 @@ exports.createRequest = catchAsync(async (req, res) => {
       identityDocument: identityDocumentUrl,
       status: 'pending',
       user: req.user.id,
-      price: totalPrice
+      price: totalPrice,
+      paymentStatus: 'pending',
+      payment: {
+        status: 'pending',
+        amount: totalPrice,
+        date: new Date(),
+        method: 'card'
+      }
     };
 
     // Créer la demande dans la base de données
@@ -85,22 +92,35 @@ exports.createRequest = catchAsync(async (req, res) => {
       // On continue même si l'assignation échoue
     }
 
-    // Créer l'intention de paiement
-    const paymentIntent = await createPaymentIntent({
-      amount: totalPrice,
-      currency: 'xof',
-      requestId: request._id,
-      userId: req.user.id
-    });
+    // Créer une notification pour le citoyen
+    try {
+      await notificationService.createNotification({
+        user: req.user.id,
+        type: 'request_created',
+        title: 'Demande créée avec succès',
+        message: 'Votre demande a été créée avec succès. Veuillez attendre la vérification par un agent avant de procéder au paiement.',
+        request: request._id
+      });
 
-    // Sauvegarder l'ID de l'intention de paiement
-    request.paymentIntentId = paymentIntent.id;
-    await request.save();
+      // Envoyer une notification en temps réel via Socket.IO
+      const io = getIO();
+      if (io) {
+        io.to(req.user.id).emit('notification', {
+          type: 'request_created',
+          title: 'Demande créée avec succès',
+          message: 'Votre demande a été créée avec succès. Veuillez attendre la vérification par un agent avant de procéder au paiement.',
+          requestId: request._id
+        });
+      }
+    } catch (error) {
+      console.error('Erreur lors de la création de la notification:', error);
+      // On continue même si la notification échoue
+    }
 
     res.status(201).json({
       success: true,
       data: request,
-      clientSecret: paymentIntent.client_secret
+      message: 'Votre demande a été créée avec succès. Veuillez attendre la vérification par un agent avant de procéder au paiement.'
     });
   } catch (error) {
     console.error('Erreur lors de la création de la demande:', error);
@@ -109,6 +129,62 @@ exports.createRequest = catchAsync(async (req, res) => {
       message: error.message
     });
   }
+});
+
+// @desc    Initialiser le paiement pour une demande
+// @route   POST /api/requests/:id/payment
+// @access  Private (Citoyen)
+exports.initializePayment = catchAsync(async (req, res) => {
+  const request = await Request.findById(req.params.id);
+
+  if (!request) {
+    return res.status(404).json({
+      success: false,
+      message: 'Demande non trouvée'
+    });
+  }
+
+  // Vérifier si l'utilisateur est le propriétaire de la demande
+  if (request.user.toString() !== req.user.id) {
+    return res.status(401).json({
+      success: false,
+      message: 'Non autorisé à effectuer le paiement pour cette demande'
+    });
+  }
+
+  // Vérifier si la demande est en attente de paiement
+  if (request.status !== 'processing') {
+    return res.status(400).json({
+      success: false,
+      message: 'La demande doit être en traitement pour effectuer le paiement'
+    });
+  }
+
+  // Mettre à jour l'objet payment avec le montant
+  request.payment = {
+    ...request.payment,
+    amount: request.price,
+    status: 'pending',
+    method: 'card',
+    date: new Date()
+  };
+
+  // Créer l'intention de paiement
+  const paymentIntent = await createPaymentIntent({
+    amount: request.price,
+    currency: 'xof',
+    requestId: request._id,
+    userId: req.user.id
+  });
+
+  // Sauvegarder l'ID de l'intention de paiement et mettre à jour la demande
+  request.paymentIntentId = paymentIntent.id;
+  await request.save();
+
+  res.status(200).json({
+    success: true,
+    clientSecret: paymentIntent.client_secret
+  });
 });
 
 // @desc    Obtenir toutes les demandes d'un citoyen
@@ -593,4 +669,102 @@ exports.getStatistics = catchAsync(async (req, res) => {
       message: error.message || 'Une erreur est survenue lors de la récupération des statistiques'
     });
   }
+});
+
+// @desc    Mettre une demande en traitement
+// @route   PUT /api/requests/:id/process
+// @access  Private (Agent)
+exports.processRequest = catchAsync(async (req, res) => {
+  const request = await Request.findById(req.params.id);
+
+  if (!request) {
+    return res.status(404).json({
+      success: false,
+      message: 'Demande non trouvée'
+    });
+  }
+
+  // Vérifier si l'utilisateur est l'agent assigné
+  if (!request.agent || request.agent.toString() !== req.user.id) {
+    return res.status(401).json({
+      success: false,
+      message: 'Non autorisé à traiter cette demande'
+    });
+  }
+
+  // Vérifier si la demande est en attente
+  if (request.status !== 'pending') {
+    return res.status(400).json({
+      success: false,
+      message: 'Seules les demandes en attente peuvent être mises en traitement'
+    });
+  }
+
+  // Mettre à jour le statut
+  request.status = 'processing';
+  request.timeline = request.timeline || [];
+  request.timeline.push({
+    status: 'processing',
+    date: new Date(),
+    description: 'Demande mise en traitement'
+  });
+
+  await request.save();
+
+  // Notifier le citoyen
+  try {
+    await notificationService.createNotification({
+      user: request.user,
+      type: 'request_status',
+      title: 'Demande mise en traitement',
+      message: `Votre demande ${request.documentType} a été mise en traitement. Vous pouvez maintenant procéder au paiement.`,
+      request: request._id
+    });
+  } catch (error) {
+    console.error('Erreur lors de la création de la notification:', error);
+  }
+
+  res.status(200).json({
+    success: true,
+    data: request
+  });
+});
+
+// @desc    Mettre à jour le statut du paiement
+// @route   POST /api/requests/:id/payment-status
+// @access  Public (pour Stripe)
+exports.updatePaymentStatus = catchAsync(async (req, res) => {
+  const { paymentIntent, status } = req.body;
+
+  if (!paymentIntent || !status) {
+    return res.status(400).json({
+      success: false,
+      message: 'Payment intent et status sont requis'
+    });
+  }
+
+  const request = await Request.findOne({ paymentIntentId: paymentIntent });
+
+  if (!request) {
+    return res.status(404).json({
+      success: false,
+      message: 'Demande non trouvée'
+    });
+  }
+
+  // Mettre à jour le statut du paiement
+  request.paymentStatus = status === 'succeeded' ? 'completed' : status;
+  request.payment = {
+    ...request.payment,
+    status: status === 'succeeded' ? 'paid' : status,
+    transactionId: paymentIntent,
+    date: new Date()
+  };
+
+  await request.save();
+
+  res.status(200).json({
+    success: true,
+    data: request
+  });
 }); 

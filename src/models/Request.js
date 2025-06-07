@@ -82,6 +82,27 @@ const requestSchema = new mongoose.Schema({
     enum: ['pending', 'completed', 'failed'],
     default: 'pending'
   },
+  payment: {
+    status: {
+      type: String,
+      enum: ['pending', 'paid', 'failed'],
+      default: 'pending'
+    },
+    amount: {
+      type: Number,
+      required: true
+    },
+    date: {
+      type: Date,
+      default: Date.now
+    },
+    method: {
+      type: String,
+      enum: ['card', 'mobile_money', 'bank_transfer'],
+      default: 'card'
+    },
+    transactionId: String
+  },
   // Suivi de la demande
   tracking: {
     submittedAt: {

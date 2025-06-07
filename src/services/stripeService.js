@@ -1,5 +1,6 @@
 const stripe = require('../config/stripe');
 const Payment = require('../models/Payment');
+const Request = require('../models/Request');
 
 // Créer une intention de paiement
 const createPaymentIntent = async ({ amount, currency = 'XOF', requestId, userId }) => {
@@ -79,6 +80,20 @@ const updatePaymentStatus = async (paymentId, status, stripePaymentId) => {
       },
       { new: true }
     );
+
+    // Mettre à jour le statut de paiement dans la demande associée
+    if (payment && payment.request) {
+      await Request.findByIdAndUpdate(
+        payment.request,
+        {
+          paymentStatus: status === 'succeeded' ? 'completed' : status,
+          'payment.status': status === 'succeeded' ? 'paid' : status,
+          'payment.transactionId': stripePaymentId,
+          'payment.date': new Date()
+        }
+      );
+    }
+
     return payment;
   } catch (error) {
     throw new Error(`Erreur lors de la mise à jour du statut du paiement: ${error.message}`);

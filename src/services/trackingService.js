@@ -13,11 +13,21 @@ const REQUEST_STATUS = {
 };
 
 // Créer un suivi de demande
-const createRequestTracking = async (requestId, status, note, userId) => {
+const createRequestTracking = async (requestId, status, note, userId, isAgent) => {
   try {
+    // Vérifier si l'utilisateur est un agent
+    if (!isAgent) {
+      throw new Error('Seuls les agents peuvent modifier le statut d\'une demande');
+    }
+
     const request = await Request.findById(requestId);
     if (!request) {
       throw new Error('Demande non trouvée');
+    }
+
+    // Vérifier si l'utilisateur est l'agent assigné à la demande
+    if (!request.agent || request.agent.toString() !== userId.toString()) {
+      throw new Error('Vous n\'êtes pas l\'agent assigné à cette demande');
     }
 
     // Ajouter le suivi
