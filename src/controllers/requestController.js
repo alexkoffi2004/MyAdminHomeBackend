@@ -214,12 +214,12 @@ exports.getRequest = catchAsync(async (req, res) => {
     
     console.log('Found request:', request);
 
-    if (!request) {
-      return res.status(404).json({
-        success: false,
-        message: 'Demande non trouvée'
-      });
-    }
+  if (!request) {
+    return res.status(404).json({
+      success: false,
+      message: 'Demande non trouvée'
+    });
+  }
 
     // Vérifier les autorisations
     const isOwner = request.user._id.toString() === req.user.id;
@@ -227,11 +227,11 @@ exports.getRequest = catchAsync(async (req, res) => {
     const isAdmin = req.user.role === 'admin';
 
     if (!isOwner && !isAssignedAgent && !isAdmin) {
-      return res.status(401).json({
-        success: false,
-        message: 'Non autorisé à accéder à cette demande'
-      });
-    }
+    return res.status(401).json({
+      success: false,
+      message: 'Non autorisé à accéder à cette demande'
+    });
+  }
 
     // Formater les données pour le frontend
     const formattedRequest = {
@@ -267,10 +267,10 @@ exports.getRequest = catchAsync(async (req, res) => {
       }
     };
 
-    res.status(200).json({
-      success: true,
+  res.status(200).json({
+    success: true,
       data: formattedRequest
-    });
+  });
   } catch (error) {
     console.error('Error in getRequest:', error);
     res.status(500).json({
